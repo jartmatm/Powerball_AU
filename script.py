@@ -67,7 +67,7 @@ model.compile(optimizer=tf.keras.optimizers.Adam(1e-3),
               loss="mse")
 
 # ======== 3) Entrenamiento ========
-history = model.fit(X_sc, Y_sc, epochs=500, batch_size=8, shuffle=True, verbose=2)
+history = model.fit(X_sc, Y_sc, epochs=100, batch_size=32, shuffle=True, verbose=2)
 
 # ======== 4) Helpers ========
 def postprocess_prediction(vec_float):
