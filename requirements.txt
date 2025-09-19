@@ -1,1 +1,7 @@
-# ...existing code from PowerBall_AU/requirements.txt...
+flask
+gunicorn
+beautifulsoup4
+requests
+tensorflow
+pandas
+numpy
