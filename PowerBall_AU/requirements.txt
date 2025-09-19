@@ -1,7 +1,0 @@
-flask
-gunicorn
-beautifulsoup4
-requests
-tensorflow
-pandas
-numpy
