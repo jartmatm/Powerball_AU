@@ -40,7 +40,11 @@
     </script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
   </head>
-  <body class="bg-night text-white font-mono antialiased">
+  <body
+    class="bg-night text-white font-mono antialiased"
+    data-run-url="{{ url_for('run_script', _external=True) }}"
+    data-status-url="{{ url_for('status', _external=True) }}"
+  >
     <div class="matrix-stage" aria-hidden="true">
       {% for column in matrix_columns %}
       <div

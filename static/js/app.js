@@ -7,6 +7,33 @@ const LOADING_LINES = [
   "[MODEL] Training neural probability grid...",
 ];
 
+function resolveEndpoint(datasetKey, fallbackPath) {
+  const configuredUrl = document.body?.dataset?.[datasetKey]?.trim();
+  if (configuredUrl && !configuredUrl.includes("{{")) {
+    return configuredUrl;
+  }
+
+  if (window.location.protocol === "http:" || window.location.protocol === "https:") {
+    return new URL(fallbackPath, window.location.href).toString();
+  }
+
+  throw new Error(
+    "No se pudo resolver la URL del backend. Abre la app desde Flask en http://127.0.0.1:10000/."
+  );
+}
+
+function getErrorMessage(error) {
+  if (!error?.message) {
+    return "Unknown UI error.";
+  }
+
+  if (error.message === "The string did not match the expected pattern.") {
+    return "No se pudo construir la URL del backend. Usa la app servida por Flask.";
+  }
+
+  return error.message;
+}
+
 function randomStream(length) {
   let output = "";
 
@@ -110,7 +137,7 @@ function initTerminalModal() {
     startTicker();
 
     try {
-      const response = await fetch("/run", {
+      const response = await fetch(resolveEndpoint("runUrl", "/run"), {
         method: "POST",
         headers: {
           Accept: "application/json",
@@ -133,7 +160,7 @@ function initTerminalModal() {
     } catch (error) {
       stopTicker();
       statusLine.textContent = "Execution failed.";
-      output.textContent = `${output.textContent}\n\n[UI] ${error.message}`;
+      output.textContent = `${output.textContent}\n\n[UI] ${getErrorMessage(error)}`;
     } finally {
       trigger.disabled = false;
     }
@@ -154,7 +181,7 @@ function initTerminalModal() {
 
 async function syncInitialState() {
   try {
-    const response = await fetch("/status");
+    const response = await fetch(resolveEndpoint("statusUrl", "/status"));
     const state = await response.json();
     updateState(state);
   } catch (_error) {
