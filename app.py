@@ -1,18 +1,10 @@
-import contextlib
-import io
 import os
-import re
-import runpy
 import time
+import traceback
 
 from flask import Flask, jsonify, render_template
 
 app = Flask(__name__)
-
-SCRIPT_FILENAME = os.environ.get("STARTUP_SCRIPT", "script.py")
-PREDICTION_PATTERN = re.compile(
-    r"Proximo sugerido desde el ultimo sorteo:\s*\[(.*?)\]\s*\|\s*PB:\s*(\d+)"
-)
 
 _state = {
     "running": False,
@@ -46,82 +38,40 @@ def _state_snapshot():
     return dict(_state)
 
 
-def _extract_prediction(text):
-    normalized = (
-        text.replace("Próximo", "Proximo")
-        .replace("último", "ultimo")
-        .replace("sugerido", "sugerido")
-    )
-    match = PREDICTION_PATTERN.search(normalized)
-    if not match:
-        return None
-
-    raw_numbers = [chunk.strip() for chunk in match.group(1).split(",") if chunk.strip()]
-    try:
-        numbers = [int(chunk) for chunk in raw_numbers]
-        powerball = int(match.group(2))
-    except ValueError:
-        return None
-
-    if len(numbers) != 7:
-        return None
-
-    return {"numbers": numbers, "powerball": powerball}
-
-
-def _build_output(stdout_contents, stderr_contents):
-    blocks = []
-    if stdout_contents:
-        blocks.append("=== STDOUT ===\n" + stdout_contents.rstrip())
-    if stderr_contents:
-        blocks.append("=== STDERR ===\n" + stderr_contents.rstrip())
-    return "\n\n".join(blocks) if blocks else "(No hubo salida por stdout ni stderr)"
-
-
 def _mark_run_finished(status):
     _state["running"] = False
     _state["last_status"] = status
     _state["last_end"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
 
-def _execute_script():
+def _execute_prediction():
+    from powerball_service import run_prediction_pipeline
+
     _state["running"] = True
     _state["last_start"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
     _state["last_end"] = None
     _state["last_status"] = None
 
-    buf_out = io.StringIO()
-    buf_err = io.StringIO()
     try:
-        with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
-            runpy.run_path(SCRIPT_FILENAME, run_name="__main__")
-
-        stdout_contents = buf_out.getvalue()
-        stderr_contents = buf_err.getvalue()
-        combined = _build_output(stdout_contents, stderr_contents)
-        prediction = _extract_prediction(stdout_contents)
-
+        result = run_prediction_pipeline()
         _mark_run_finished("ok")
         return {
             "status": "ok",
-            "output": combined,
-            "prediction": prediction,
+            "output": result["output"],
+            "prediction": result["prediction"],
+            "summary": result["summary"],
+            "draw_count": result["draw_count"],
+            "data_source": result["data_source"],
             "state": _state_snapshot(),
         }, 200
     except Exception as exc:
-        stdout_contents = buf_out.getvalue()
-        stderr_contents = buf_err.getvalue()
-        if stderr_contents:
-            stderr_contents = stderr_contents.rstrip() + "\n"
-        stderr_contents += f"[Exception captured in app]: {exc!r}\n"
-        combined = _build_output(stdout_contents, stderr_contents)
-
         _mark_run_finished("error")
         return {
             "status": "error",
             "message": "La ejecucion del modelo fallo.",
-            "output": combined,
+            "output": "=== ERROR ===\n" + traceback.format_exc().rstrip(),
             "prediction": None,
+            "error_type": type(exc).__name__,
             "state": _state_snapshot(),
         }, 500
 
@@ -147,8 +97,9 @@ def status():
     return jsonify(_state_snapshot())
 
 
-@app.route("/run", methods=["GET", "POST"])
-def run_script():
+@app.route("/api/predict", methods=["POST"])
+@app.route("/run", methods=["POST"])
+def run_prediction():
     if _state["running"]:
         return jsonify(
             {
@@ -158,16 +109,7 @@ def run_script():
             }
         ), 409
 
-    if not os.path.exists(SCRIPT_FILENAME):
-        return jsonify(
-            {
-                "status": "error",
-                "message": f"No existe el archivo {SCRIPT_FILENAME}",
-                "state": _state_snapshot(),
-            }
-        ), 404
-
-    payload, status_code = _execute_script()
+    payload, status_code = _execute_prediction()
     return jsonify(payload), status_code
 
 

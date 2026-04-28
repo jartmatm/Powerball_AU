@@ -13,13 +13,7 @@ function resolveEndpoint(datasetKey, fallbackPath) {
     return configuredUrl;
   }
 
-  if (window.location.protocol === "http:" || window.location.protocol === "https:") {
-    return new URL(fallbackPath, window.location.href).toString();
-  }
-
-  throw new Error(
-    "No se pudo resolver la URL del backend. Abre la app desde Flask en http://127.0.0.1:10000/."
-  );
+  return fallbackPath;
 }
 
 function getErrorMessage(error) {
@@ -27,8 +21,8 @@ function getErrorMessage(error) {
     return "Unknown UI error.";
   }
 
-  if (error.message === "The string did not match the expected pattern.") {
-    return "No se pudo construir la URL del backend. Usa la app servida por Flask.";
+  if (error.message === "Failed to fetch") {
+    return "No se pudo conectar con Flask. Ejecuta la app desde app.py o gunicorn.";
   }
 
   return error.message;
@@ -137,7 +131,7 @@ function initTerminalModal() {
     startTicker();
 
     try {
-      const response = await fetch(resolveEndpoint("runUrl", "/run"), {
+      const response = await fetch(resolveEndpoint("runUrl", "/api/predict"), {
         method: "POST",
         headers: {
           Accept: "application/json",
