@@ -10,16 +10,24 @@ import requests
 all_data = []
 for year, url in urls.items():
     print(f"Procesando sorteo {year}...")
-    response = requests.get(url)
-    if response.status_code == 200:
-        soup = BeautifulSoup(response.text, 'html.parser')
-        ball = soup.find_all('li', class_='ball ball -b280')
-        powerball = soup.find_all('li', class_='ball powerball -b280')
+    try:
+        response = requests.get(url, timeout=20)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"Error consultando {year}: {exc}")
+        continue
 
-        for i in range(0, len(ball), 7):
-            numeros = [int(q.text) for q in ball[i:i+7]]
-            pb = int(powerball[i // 7].text) if (i // 7) < len(powerball) else 0
-            all_data.append(numeros + [pb])
+    soup = BeautifulSoup(response.text, 'html.parser')
+    ball = soup.find_all('li', class_='ball ball -b280')
+    powerball = soup.find_all('li', class_='ball powerball -b280')
+
+    for i in range(0, len(ball), 7):
+        numeros = [int(q.text) for q in ball[i:i+7]]
+        pb = int(powerball[i // 7].text) if (i // 7) < len(powerball) else 0
+        all_data.append(numeros + [pb])
+
+if not all_data:
+    raise RuntimeError("No se pudo extraer ningun sorteo desde la fuente remota.")
 
 df = pd.DataFrame(all_data, columns=[f"Numero{i}" for i in range(1, 8)] + ["Powerball"])
 
@@ -82,8 +90,9 @@ def postprocess_prediction(vec_float):
             num += 1
             if num > 35:
                 num = 1
-        main.append(num)
-        used.add(num)
+        clean_num = int(num)
+        main.append(clean_num)
+        used.add(clean_num)
     pb = np.clip(pred[7], 1, 20)
     return main, int(pb)
 
@@ -98,7 +107,7 @@ def predict_from_last_draw():
 # ======== 5) Ejemplo ========
 
 nums_pred2, pb_pred2 = predict_from_last_draw()
-print("Próximo sugerido desde el último sorteo:", nums_pred2, "| PB:", pb_pred2)
+print("Proximo sugerido desde el ultimo sorteo:", nums_pred2, "| PB:", pb_pred2)
 
 # ======== 6) Graficar curva de pérdida ========
 """"atplotlib.pyplot as plt
