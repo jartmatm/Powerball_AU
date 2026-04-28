@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 import re
-from typing import Callable
+from typing import Callable, Literal
 import warnings
 
 from bs4 import BeautifulSoup
@@ -16,6 +16,7 @@ warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL 1.1.
 import requests
 
 LOGGER = Callable[[str], None]
+HistorySource = Literal["auto", "cache", "remote"]
 HISTORY_CACHE_PATH = Path("data/powerball_history.csv")
 MAIN_COLUMNS = [f"Numero{i}" for i in range(1, 8)]
 LEGACY_COLUMNS = ["draw_number", "draw_date"] + MAIN_COLUMNS + ["Powerball"]
@@ -35,6 +36,27 @@ DRAW_BLOCK_PATTERN = re.compile(
 
 def _silent_logger(_message: str) -> None:
     return None
+
+
+def resolve_cache_path(
+    cache_path: Path | None = None,
+    min_year: int | None = None,
+    max_year: int | None = None,
+) -> Path:
+    if cache_path is not None:
+        return cache_path
+
+    if min_year is None and max_year is None:
+        return HISTORY_CACHE_PATH
+
+    suffix_parts = []
+    if min_year is not None:
+        suffix_parts.append(f"from_{min_year}")
+    if max_year is not None:
+        suffix_parts.append(f"to_{max_year}")
+
+    suffix = "_".join(suffix_parts)
+    return HISTORY_CACHE_PATH.with_name(f"{HISTORY_CACHE_PATH.stem}_{suffix}{HISTORY_CACHE_PATH.suffix}")
 
 
 def _persist_cache(history_frame: pd.DataFrame, cache_path: Path) -> None:
@@ -73,6 +95,33 @@ def load_cached_history(cache_path: Path = HISTORY_CACHE_PATH) -> pd.DataFrame:
         _persist_cache(history_frame, cache_path)
 
     return history_frame.sort_values(["draw_date", "draw_number"]).reset_index(drop=True)
+
+
+def build_url_map(
+    url_map: dict[int, str] | None = None,
+    min_year: int | None = None,
+    max_year: int | None = None,
+) -> dict[int, str]:
+    selected_map = dict(url_map or DEFAULT_URLS)
+    filtered_map = {
+        year: url
+        for year, url in selected_map.items()
+        if (min_year is None or year >= min_year) and (max_year is None or year <= max_year)
+    }
+    return dict(sorted(filtered_map.items(), reverse=True))
+
+
+def filter_history_by_year(
+    history_frame: pd.DataFrame,
+    min_year: int | None = None,
+    max_year: int | None = None,
+) -> pd.DataFrame:
+    filtered_history = history_frame.copy()
+    if min_year is not None:
+        filtered_history = filtered_history[filtered_history["draw_date"].dt.year >= min_year]
+    if max_year is not None:
+        filtered_history = filtered_history[filtered_history["draw_date"].dt.year <= max_year]
+    return filtered_history.sort_values(["draw_date", "draw_number"]).reset_index(drop=True)
 
 
 def parse_archive_html(html: str) -> list[dict[str, object]]:
@@ -180,3 +229,59 @@ def fetch_history(
     raise RuntimeError(
         "No se pudo obtener el historial de sorteos desde la web y tampoco existe cache local."
     )
+
+
+def load_history(
+    source: HistorySource = "auto",
+    min_year: int | None = None,
+    max_year: int | None = None,
+    cache_path: Path | None = None,
+    logger: LOGGER | None = None,
+    timeout: int = 20,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    logger = logger or _silent_logger
+    selected_url_map = build_url_map(min_year=min_year, max_year=max_year)
+    resolved_cache_path = resolve_cache_path(cache_path=cache_path, min_year=min_year, max_year=max_year)
+
+    if not selected_url_map and source != "cache":
+        raise RuntimeError("No hay URLs disponibles para el rango de anos solicitado.")
+
+    if source == "cache":
+        cache_candidates = [resolved_cache_path]
+        if resolved_cache_path != HISTORY_CACHE_PATH:
+            cache_candidates.append(HISTORY_CACHE_PATH)
+
+        last_error: Exception | None = None
+        for candidate in cache_candidates:
+            try:
+                history_frame = load_cached_history(candidate)
+                history_frame = filter_history_by_year(
+                    history_frame,
+                    min_year=min_year,
+                    max_year=max_year,
+                )
+                if history_frame.empty:
+                    continue
+
+                logger(f"[SCRAPE] Cache cargado desde {candidate}.")
+                return history_frame, {
+                    "source": "cache",
+                    "failed_years": [],
+                    "cache_path": str(candidate),
+                }
+            except (FileNotFoundError, ValueError) as exc:
+                last_error = exc
+
+        raise RuntimeError("No existe un cache utilizable para el rango solicitado.") from last_error
+
+    history_frame, details = fetch_history(
+        url_map=selected_url_map,
+        cache_path=resolved_cache_path,
+        logger=logger,
+        timeout=timeout,
+    )
+    history_frame = filter_history_by_year(history_frame, min_year=min_year, max_year=max_year)
+    if history_frame.empty:
+        raise RuntimeError("No hubo sorteos disponibles tras aplicar el filtro de anos solicitado.")
+    details["cache_path"] = str(resolved_cache_path)
+    return history_frame, details
